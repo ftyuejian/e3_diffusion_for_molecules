@@ -50,6 +50,9 @@ class EGNN_dynamics_QM9(nn.Module):
         bs, n_nodes, dims = xh.shape
         h_dims = dims - self.n_dims
         edges = self.get_adj_matrix(n_nodes, bs, self.device)
+        # print("check egnn edges",len(edges),edges[0].shape,edges[0],"nnode",n_nodes,"bs",bs)
+
+
         edges = [x.to(self.device) for x in edges]
         node_mask = node_mask.view(bs*n_nodes, 1)
         edge_mask = edge_mask.view(bs*n_nodes*n_nodes, 1)

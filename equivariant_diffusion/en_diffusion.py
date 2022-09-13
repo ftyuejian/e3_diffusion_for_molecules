@@ -2,6 +2,7 @@ from equivariant_diffusion import utils
 import numpy as np
 import math
 import torch
+from copy import deepcopy
 from egnn import models
 from torch.nn import functional as F
 from equivariant_diffusion import utils as diffusion_utils
@@ -281,6 +282,7 @@ class EnVariationalDiffusion(torch.nn.Module):
         self.dynamics = dynamics
 
         self.in_node_nf = in_node_nf
+        # print("in_node_nf",self.in_node_nf)
         self.n_dims = n_dims
         self.num_classes = self.in_node_nf - self.include_charges
 
@@ -310,7 +312,10 @@ class EnVariationalDiffusion(torch.nn.Module):
                 f'1 / norm_value = {1. / max_norm_value}')
 
     def phi(self, x, t, node_mask, edge_mask, context):
+        # print("before EGNN", x.shape,t)
+        # print("node mask",node_mask)
         net_out = self.dynamics._forward(t, x, node_mask, edge_mask, context)
+        # print("after egnn",net_out.shape)
 
         return net_out
 
@@ -581,29 +586,36 @@ class EnVariationalDiffusion(torch.nn.Module):
         s_int = t_int - 1
         t_is_zero = (t_int == 0).float()  # Important to compute log p(x | z0).
 
+
+        # print("pre-normalized time schedule",t_int,s_int,self.T)
         # Normalize t to [0, 1]. Note that the negative
         # step of s will never be used, since then p(x | z0) is computed.
         s = s_int / self.T
         t = t_int / self.T
+        # print("show time schedule after normalized",s,t)
 
         # Compute gamma_s and gamma_t via the network.
         gamma_s = self.inflate_batch_array(self.gamma(s), x)
         gamma_t = self.inflate_batch_array(self.gamma(t), x)
+        # print("x]n",x)
 
         # Compute alpha_t and sigma_t from gamma.
         alpha_t = self.alpha(gamma_t, x)
         sigma_t = self.sigma(gamma_t, x)
-
+        print("alpha and sigma",alpha_t.shape,alpha_t,sigma_t.shape,sigma_t)
         # Sample zt ~ Normal(alpha_t x, sigma_t)
+        # print("node m",node_mask)
         eps = self.sample_combined_position_feature_noise(
             n_samples=x.size(0), n_nodes=x.size(1), node_mask=node_mask)
 
-        # Concatenate x, h[integer] and h[categorical].
         xh = torch.cat([x, h['categorical'], h['integer']], dim=2)
+        print("xh",xh.shape)
         # Sample z_t given x, h for timestep t, from q(z_t | x, h)
         z_t = alpha_t * xh + sigma_t * eps
-
+        print("check shape of z_t",z_t.shape)
         diffusion_utils.assert_mean_zero_with_mask(z_t[:, :, :self.n_dims], node_mask)
+
+
 
         # Neural net prediction.
         net_out = self.phi(z_t, t, node_mask, edge_mask, context)
@@ -689,9 +701,14 @@ class EnVariationalDiffusion(torch.nn.Module):
         """
         Computes the loss (type l2 or NLL) if training. And if eval then always computes NLL.
         """
+
+        # print("*****tracking the details of the data*****")
+        # print('x',type(x),x.shape)
+        # print("h",type(h),h["categorical"].shape,h['integer'].shape)
+        # print("ddd",node_mask)
         # Normalize data, take into account volume change in x.
         x, h, delta_log_px = self.normalize(x, h, node_mask)
-
+        # print("show x", x,"\n\n\n")
         # Reset delta_log_px if not vlb objective.
         if self.training and self.loss_type == 'l2':
             delta_log_px = torch.zeros_like(delta_log_px)
@@ -711,6 +728,108 @@ class EnVariationalDiffusion(torch.nn.Module):
 
         return neg_log_pxh
 
+    def forward_diffuse_motif(self, x_m, h_m, node_mask_m, t):
+        """
+
+        Parameters
+        ----------
+        x_m
+        h_m
+        node_mask_m
+        edge_mask_m
+        t
+
+        Returns
+        -------
+
+        """
+
+        # generate time schedule
+        timestep = torch.tensor([t.item(),t.item(),t.item()]).reshape(-1,1)
+        norm_tstep = timestep/self.T
+
+        # using gamma network to compute the alpha and sigma
+        gamma_t = self.inflate_batch_array(self.gamma(norm_tstep), x_m)
+        alpha_t = self.alpha(gamma_t, x_m)
+        sigma_t = self.sigma(gamma_t, x_m)
+
+        # sample an ideal Gaussian noise from the distribution, remember to subtract the gravity center
+        eps = self.sample_combined_position_feature_noise(
+            n_samples=x_m.size(0), n_nodes=x_m.size(1), node_mask=node_mask_m)
+        xh = torch.cat([x_m, h_m['categorical'], h_m['integer']], dim=2)
+
+        # compute z_t_motif
+        z_t_motif = alpha_t * xh + sigma_t * eps
+
+        diffusion_utils.assert_mean_zero_with_mask(z_t_motif[:, :, :self.n_dims], node_mask_m)
+
+        return z_t_motif
+
+
+    def replace_with_motif(self,zt,z_t_motif,tracer):
+        """
+        substitute motif part inside the molecule
+        Parameters
+        ----------
+        zt torch.tensor(num_of_mol, num_of_atom, feature_dim)
+        z_t_motif torch.tensor(num_of_mol, num_of_atom, feature_dim)
+        tracer: tuple(list())
+
+        Returns zt_prime torch.tensor(num_of_mol, num_of_atom, feature_dim)
+        -------
+
+        """
+        # make sure the batch is the same
+        assert (zt.shape[0] == z_t_motif.shape[0])
+
+        # substitute zt with z_t_motif
+        zt_prime = deepcopy(zt)
+        for i in range(len(tracer)):
+
+            for j in range(len(tracer[i])):
+                zt_prime[i][tracer[i][j]] = z_t_motif[i][j]
+
+        return zt_prime
+
+    def sample_p_zs_given_zt_condition_on_motif(self, s, t, zt, node_mask, edge_mask, x_m, h_m, node_mask_m, tracer ,context, fix_noise=False):
+        """Samples from zs ~ p(zs | zt). Only used during sampling."""
+        gamma_s = self.gamma(s)
+        gamma_t = self.gamma(t)
+
+        sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s = \
+            self.sigma_and_alpha_t_given_s(gamma_t, gamma_s, zt)
+
+        sigma_s = self.sigma(gamma_s, target_tensor=zt)
+        sigma_t = self.sigma(gamma_t, target_tensor=zt)
+
+        # add replace function, replace motif part with forward diffused motif then pass the modified molecule into the network
+        z_t_motif = self.forward_diffuse_motif(x_m,h_m,node_mask_m,t)
+        zt_prime = self.replace_with_motif(zt,z_t_motif, tracer)
+
+
+        # Neural net prediction.
+        eps_t = self.phi(zt_prime, t, node_mask, edge_mask, context)
+
+        # Compute mu for p(zs | zt).
+        diffusion_utils.assert_mean_zero_with_mask(zt[:, :, :self.n_dims], node_mask)
+        diffusion_utils.assert_mean_zero_with_mask(eps_t[:, :, :self.n_dims], node_mask)
+        mu = zt / alpha_t_given_s - (sigma2_t_given_s / alpha_t_given_s / sigma_t) * eps_t
+
+        # Compute sigma for p(zs | zt).
+        sigma = sigma_t_given_s * sigma_s / sigma_t
+
+        # Sample zs given the paramters derived from zt.
+        zs = self.sample_normal(mu, sigma, node_mask, fix_noise)
+
+        # Project down to avoid numerical runaway of the center of gravity.
+        zs = torch.cat(
+            [diffusion_utils.remove_mean_with_mask(zs[:, :, :self.n_dims],
+                                                   node_mask),
+             zs[:, :, self.n_dims:]], dim=2
+        )
+        return zs
+
+
     def sample_p_zs_given_zt(self, s, t, zt, node_mask, edge_mask, context, fix_noise=False):
         """Samples from zs ~ p(zs | zt). Only used during sampling."""
         gamma_s = self.gamma(s)
@@ -722,6 +841,7 @@ class EnVariationalDiffusion(torch.nn.Module):
         sigma_s = self.sigma(gamma_s, target_tensor=zt)
         sigma_t = self.sigma(gamma_t, target_tensor=zt)
 
+        print('check sampling shape',zt.shape)
         # Neural net prediction.
         eps_t = self.phi(zt, t, node_mask, edge_mask, context)
 
@@ -762,12 +882,13 @@ class EnVariationalDiffusion(torch.nn.Module):
         """
         Draw samples from the generative model.
         """
+        print("fix noise",fix_noise)
         if fix_noise:
             # Noise is broadcasted over the batch axis, useful for visualizations.
             z = self.sample_combined_position_feature_noise(1, n_nodes, node_mask)
         else:
             z = self.sample_combined_position_feature_noise(n_samples, n_nodes, node_mask)
-
+        print("z",z.shape)
         diffusion_utils.assert_mean_zero_with_mask(z[:, :, :self.n_dims], node_mask)
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.

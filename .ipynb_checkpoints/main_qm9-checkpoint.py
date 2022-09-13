@@ -87,7 +87,6 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='enables CUDA training')
 parser.add_argument('--save_model', type=eval, default=True,
                     help='save model')
-parser.add_argument('--load_history_model',type = eval,default= False,help = '')
 parser.add_argument('--generate_epochs', type=int, default=1,
                     help='save model')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for the dataloader')
@@ -124,18 +123,17 @@ atom_encoder = dataset_info['atom_encoder']
 atom_decoder = dataset_info['atom_decoder']
 
 # args, unparsed_args = parser.parse_known_args()
-# args.wandb_usr = utils.get_wandb_username(args.wandb_usr)
+args.wandb_usr = utils.get_wandb_username(args.wandb_usr)
 
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 dtype = torch.float32
-print('number of device',torch.cuda.device_count())
 
 if args.resume is not None:
     exp_name = args.exp_name + '_resume'
     start_epoch = args.start_epoch
     resume = args.resume
-    # wandb_usr = args.wandb_usr
+    wandb_usr = args.wandb_usr
     normalization_factor = args.normalization_factor
     aggregation_method = args.aggregation_method
 
@@ -147,7 +145,7 @@ if args.resume is not None:
 
     args.exp_name = exp_name
     args.start_epoch = start_epoch
-    # args.wandb_usr = wandb_usr
+    args.wandb_usr = wandb_usr
 
     # Careful with this -->
     if not hasattr(args, 'normalization_factor'):
@@ -162,16 +160,14 @@ utils.create_folders(args)
 
 
 # Wandb config
-# if args.no_wandb:
-#     mode = 'disabled'
-# else:
-#     mode = 'online' if args.online else 'offline'
-
-
-# kwargs = {'entity': args.wandb_usr, 'name': args.exp_name, 'project': 'e3_diffusion', 'config': args,
-#           'settings': wandb.Settings(_disable_stats=True), 'reinit': True, 'mode': mode}
-# wandb.init(**kwargs)
-# wandb.save('*.txt')
+if args.no_wandb:
+    mode = 'disabled'
+else:
+    mode = 'online' if args.online else 'offline'
+kwargs = {'entity': args.wandb_usr, 'name': args.exp_name, 'project': 'e3_diffusion', 'config': args,
+          'settings': wandb.Settings(_disable_stats=True), 'reinit': True, 'mode': mode}
+wandb.init(**kwargs)
+wandb.save('*.txt')
 
 # Retrieve QM9 dataloaders
 dataloaders, charge_scale = dataset.retrieve_dataloaders(args)
@@ -190,19 +186,11 @@ else:
 
 args.context_node_nf = context_node_nf
 
-# print("info about dataloader", type(dataloaders['train']), len(dataloaders['train']),next(iter(dataloaders['train'])))
+
 # Create EGNN flow
 model, nodes_dist, prop_dist = get_model(args, device, dataset_info, dataloaders['train'])
 if prop_dist is not None:
     prop_dist.set_normalizer(property_norms)
-if args.load_history_model:
-    try:
-        print("loading history model")
-        model.load_state_dict(torch.load('outputs/%s/pretrain/flow_ema.npy' % args.exp_name))
-        print('successfully load the model')
-    except:
-        print('fail to load history model')
-
 model = model.to(device)
 optim = get_optim(args, model)
 # print(model)
@@ -249,22 +237,21 @@ def main():
     best_nll_val = 1e8
     best_nll_test = 1e8
     for epoch in range(args.start_epoch, args.n_epochs):
-        # start_epoch = time.time()
+        start_epoch = time.time()
         train_epoch(args=args, loader=dataloaders['train'], epoch=epoch, model=model, model_dp=model_dp,
                     model_ema=model_ema, ema=ema, device=device, dtype=dtype, property_norms=property_norms,
                     nodes_dist=nodes_dist, dataset_info=dataset_info,
                     gradnorm_queue=gradnorm_queue, optim=optim, prop_dist=prop_dist)
-        # print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
+        print(f"Epoch took {time.time() - start_epoch:.1f} seconds.")
 
         if epoch % args.test_epochs == 0:
-            # if isinstance(model, en_diffusion.EnVariationalDiffusion):
-                # wandb.log(model.log_info(), commit=True)
+            if isinstance(model, en_diffusion.EnVariationalDiffusion):
+                wandb.log(model.log_info(), commit=True)
 
-
-            # if not args.break_train_epoch:
-            #     analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
-            #                      dataset_info=dataset_info, device=device,
-            #                      prop_dist=prop_dist, n_samples=args.n_stability_samples)
+            if not args.break_train_epoch:
+                analyze_and_save(args=args, epoch=epoch, model_sample=model_ema, nodes_dist=nodes_dist,
+                                 dataset_info=dataset_info, device=device,
+                                 prop_dist=prop_dist, n_samples=args.n_stability_samples)
             nll_val = test(args=args, loader=dataloaders['valid'], epoch=epoch, eval_model=model_ema_dp,
                            partition='Val', device=device, dtype=dtype, nodes_dist=nodes_dist,
                            property_norms=property_norms)
@@ -293,10 +280,9 @@ def main():
                         pickle.dump(args, f)
             print('Val loss: %.4f \t Test loss:  %.4f' % (nll_val, nll_test))
             print('Best val loss: %.4f \t Best test loss:  %.4f' % (best_nll_val, best_nll_test))
-            print('end of epoch {:}'.format(epoch))
-            # wandb.log({"Val loss ": nll_val}, commit=True)
-            # wandb.log({"Test loss ": nll_test}, commit=True)
-            # wandb.log({"Best cross-validated test loss ": best_nll_test}, commit=True)
+            wandb.log({"Val loss ": nll_val}, commit=True)
+            wandb.log({"Test loss ": nll_test}, commit=True)
+            wandb.log({"Best cross-validated test loss ": best_nll_test}, commit=True)
 
 
 if __name__ == "__main__":

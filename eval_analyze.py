@@ -20,6 +20,7 @@ from qm9.analyze import analyze_stability_for_molecules, analyze_node_distributi
 from qm9.utils import prepare_context, compute_mean_mad
 from qm9 import visualizer as qm9_visualizer
 import qm9.losses as losses
+from tqdm import tqdm
 
 try:
     from qm9 import rdkit_functions
@@ -39,6 +40,9 @@ def analyze_and_save(args, eval_args, device, generative_model,
     assert n_samples % batch_size == 0
     molecules = {'one_hot': [], 'x': [], 'node_mask': []}
     start_time = time.time()
+
+
+    pbar = tqdm(total=int(n_samples/batch_size), dynamic_ncols=True, leave=False, position=0, desc='analyzing sampling quality')
     for i in range(int(n_samples/batch_size)):
         nodesxsample = nodes_dist.sample(batch_size)
         one_hot, charges, x, node_mask = sample(
@@ -59,6 +63,8 @@ def analyze_and_save(args, eval_args, device, generative_model,
                 join(eval_args.model_path, 'eval/analyzed_molecules/'),
                 one_hot, charges, x, dataset_info, id_from, name='molecule',
                 node_mask=node_mask)
+        pbar.update()
+    pbar.close()
 
     molecules = {key: torch.cat(molecules[key], dim=0) for key in molecules}
     stability_dict, rdkit_metrics = analyze_stability_for_molecules(

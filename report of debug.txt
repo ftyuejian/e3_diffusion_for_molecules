@@ -1,0 +1,8 @@
+some note of the code and model
+
+len of train_dataset 100000
+
+len of val_dataset 17748
+
+len of test_dataset 13083
+

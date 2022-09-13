@@ -51,10 +51,14 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
     -----
     TODO: Delete the splits argument.
     """
+    print("H remove?",remove_h)
     # Set the number of points based upon the arguments
     num_pts = {'train': args.num_train,
                'test': args.num_test, 'valid': args.num_valid}
 
+    # num_pts = {'train': 100,
+    #            'test': 100, 'valid': 100}
+    print("show data dir", datadir)
     # Download and process dataset. Returns datafiles.
     datafiles = prepare_dataset(
         datadir, 'qm9', subset, splits, force_download=force_download)
@@ -65,7 +69,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
         with np.load(datafile) as f:
             datasets[split] = {key: torch.from_numpy(
                 val) for key, val in f.items()}
-
+    # print("mid point 1",datasets)
     if dataset != 'qm9':
         np.random.seed(42)
         fixed_perm = np.random.permutation(len(datasets['train']['num_atoms']))
@@ -82,7 +86,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
     keys = [list(data.keys()) for data in datasets.values()]
     assert all([key == keys[0] for key in keys]
                ), 'Datasets must have same set of keys!'
-
+    # print("mid point 1",datasets)
     # TODO: remove hydrogens here if needed
     if remove_h:
         for key, dataset in datasets.items():
@@ -130,7 +134,7 @@ def initialize_datasets(args, datadir, dataset, subset=None, splits=None,
     args.num_train = datasets['train'].num_pts
     args.num_valid = datasets['valid'].num_pts
     args.num_test = datasets['test'].num_pts
-
+    # print("datasets",next(iter(DataLoader(datasets['test']))))
     return args, datasets, num_species, max_charge
 
 

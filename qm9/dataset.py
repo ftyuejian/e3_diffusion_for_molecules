@@ -19,9 +19,13 @@ def retrieve_dataloaders(cfg):
                                                                         remove_h=cfg.remove_h)
         qm9_to_eV = {'U0': 27.2114, 'U': 27.2114, 'G': 27.2114, 'H': 27.2114, 'zpve': 27211.4, 'gap': 27.2114, 'homo': 27.2114,
                      'lumo': 27.2114}
-
+        # print("datasets", next(iter(DataLoader(datasets['test']))))
+        # print("num_species",num_species)
         for dataset in datasets.values():
+            # print("datasets",dataset[0])
             dataset.convert_units(qm9_to_eV)
+        # print("datasets", next(iter(DataLoader(datasets['train']))))
+
 
         if filter_n_atoms is not None:
             print("Retrieving molecules with only %d atoms" % filter_n_atoms)
@@ -35,6 +39,8 @@ def retrieve_dataloaders(cfg):
                                          num_workers=num_workers,
                                          collate_fn=preprocess.collate_fn)
                              for split, dataset in datasets.items()}
+        # print("2222222", next(iter(dataloaders['train'])))
+
     elif 'geom' in cfg.dataset:
         import build_geom_dataset
         from configs.datasets_config import get_dataset_info

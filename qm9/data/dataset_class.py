@@ -41,7 +41,7 @@ class ProcessedDataset(Dataset):
                 self.num_pts = len(data['charges'])
             else:
                 self.num_pts = num_pts
-
+        print("len of dataset",self.num_pts)
         # If included species is not specified
         if included_species is None:
             included_species = torch.unique(self.data['charges'], sorted=True)

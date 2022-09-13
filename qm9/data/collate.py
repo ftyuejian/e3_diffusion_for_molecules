@@ -76,18 +76,26 @@ class PreprocessQM9:
         batch : dict of Pytorch tensors
             The collated data.
         """
+        # print('\n\n\ncollate start\n\n\n')
+        # print(batch[0],batch[0]['charges'].shape,batch[0]['positions'].shape,batch[0]['one_hot'].shape)
         batch = {prop: batch_stack([mol[prop] for mol in batch]) for prop in batch[0].keys()}
 
         to_keep = (batch['charges'].sum(0) > 0)
 
         batch = {key: drop_zeros(prop, to_keep) for key, prop in batch.items()}
 
+
+        # print("batch charges",batch['charges'].shape)
         atom_mask = batch['charges'] > 0
+        # print("atom_mask",atom_mask.shape)
+        #
         batch['atom_mask'] = atom_mask
 
         #Obtain edges
         batch_size, n_nodes = atom_mask.size()
+        # print("check the edge_mask", atom_mask.shape,atom_mask.unsqueeze(1).shape,atom_mask.unsqueeze(2).shape )
         edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+        # print("after mul",edge_mask.shape)
 
         #mask diagonal
         diag_mask = ~torch.eye(edge_mask.size(1), dtype=torch.bool).unsqueeze(0)
@@ -100,4 +108,6 @@ class PreprocessQM9:
             batch['charges'] = batch['charges'].unsqueeze(2)
         else:
             batch['charges'] = torch.zeros(0)
+
+        # print("check batch",batch,batch['charges'].shape,batch['positions'].shape,batch['one_hot'].shape,batch['atom_mask'].shape,batch['edge_mask'].shape)
         return batch

@@ -17,7 +17,7 @@ def compute_loss_and_nll(args, generative_model, nodes_dist, x, h, node_mask, ed
         edge_mask = edge_mask.view(bs, n_nodes * n_nodes)
 
         assert_correctly_masked(x, node_mask)
-
+        # print("other",node_mask)
         # Here x is a position tensor, and h is a dictionary with keys
         # 'categorical' and 'integer'.
         nll = generative_model(x, h, node_mask, edge_mask, context)
